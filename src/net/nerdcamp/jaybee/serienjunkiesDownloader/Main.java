@@ -19,11 +19,25 @@ import org.eclipse.swt.layout.RowData;
 import org.eclipse.swt.layout.RowLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.MessageBox;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
 
 public class Main {
+
+	final static Pattern FRAME_PATTERN = Pattern
+			.compile(".*\\<FRAME\\s*SRC=\"([^\"]*)\"");
+	final static Pattern FORM_PATTERN = Pattern
+			.compile(".*\\<FORM[^\\>]*\\>(.*)\\<\\/FORM\\>.*");
+	final static Pattern HIDDEN_INPUT_PATTERN = Pattern
+			.compile(".*\\<INPUT[^\\>]*NAME=\"s\"[^\\>]*VALUE=\"([^\"]*)\".*\\>.*");
+	final static Pattern CAPTCHA_IMAGE_PATTERN = Pattern
+			.compile(".*\\<IMG.*SRC=\"([^\"]*)\".*");
+	final static Pattern DOWNLOADLINK_PATTERN = Pattern
+			.compile("(http:\\/\\/download\\.serienjunkies\\.org\\/go-[^\"]*)\"");
+	final static Pattern FRAME_DOWNLOADLINK_PATTERN = Pattern
+			.compile("location=\\\"(\\/#\\!download\\|\\d+\\|\\d+\\|[^\\|]+\\|\\d+)");
 
 	private static Display display = null;
 
@@ -70,13 +84,17 @@ public class Main {
 
 	public static void main(final String[] args) {
 		Main.form = new Shell(Main.getDisplay());
+		final Label inputLabel = new Label(Main.form, 0);
 		Main.input = new Text(Main.form, SWT.BORDER | SWT.MULTI | SWT.V_SCROLL);
+		final Button resolveLinks = new Button(Main.form, SWT.PUSH | SWT.CENTER);
+		final Label outputLabel = new Label(Main.form, 0);
 		Main.output = new Text(Main.form, SWT.BORDER | SWT.MULTI | SWT.V_SCROLL);
 
-		final Button getLinks = new Button(Main.form, SWT.PUSH | SWT.CENTER);
-
-		getLinks.setText("Links auflösen");
-		getLinks.addSelectionListener(Main.getLinksListener);
+		Main.form.setText("Serienjunkies.org link resolver");
+		inputLabel.setText("Paste links to resolve and click 'resolve links':");
+		outputLabel.setText("Resolved links:");
+		resolveLinks.setText("resolve links");
+		resolveLinks.addSelectionListener(Main.resolveLinksListener);
 
 		Main.form.setLayout(new RowLayout(SWT.VERTICAL));
 		Main.input.setLayoutData(new RowData(800, 250));
@@ -126,7 +144,7 @@ public class Main {
 			}
 			if ((content.length() == 3)
 					&& content.toString().equalsIgnoreCase("rar")) {
-				// Falls wir ausversehen eine Datei runterladen
+				// to prevent downloading of files
 				content.append("location=\"");
 				content.append(url);
 				content.append("\"");
@@ -137,26 +155,13 @@ public class Main {
 		return content.toString();
 	}
 
-	static SelectionListener getLinksListener = new SelectionListener() {
+	static SelectionListener resolveLinksListener = new SelectionListener() {
 
-		@Override
 		public void widgetSelected(final SelectionEvent e) {
 			((Button) e.widget).setEnabled(false);
+			Main.input.setEnabled(false);
 			final StringTokenizer input = new StringTokenizer(
-					Main.input.getText());
-
-			final Pattern framePattern = Pattern
-					.compile(".*\\<FRAME\\s*SRC=\"([^\"]*)\"");
-			final Pattern formPattern = Pattern
-					.compile(".*\\<FORM[^\\>]*\\>(.*)\\<\\/FORM\\>.*");
-			final Pattern hiddenInputPattern = Pattern
-					.compile(".*\\<INPUT[^\\>]*NAME=\"s\"[^\\>]*VALUE=\"([^\"]*)\".*\\>.*");
-			final Pattern captchaImagePattern = Pattern
-					.compile(".*\\<IMG.*SRC=\"([^\"]*)\".*");
-			final Pattern downloadLinkPattern = Pattern
-					.compile("(http:\\/\\/download\\.serienjunkies\\.org\\/go-[^\"]*)\"");
-			final Pattern frameDownloadLinkPattern = Pattern
-					.compile("location=\\\"(\\/#\\!download\\|\\d+\\|\\d+\\|[^\\|]+\\|\\d+)");
+					Main.input.getText(), "\r\n");
 
 			Main.output.setText("");
 			outer: while (input.hasMoreElements()) {
@@ -173,7 +178,8 @@ public class Main {
 						}
 
 						if (content.contains("FRAMESET")) {
-							final Matcher frame = framePattern.matcher(content);
+							final Matcher frame = Main.FRAME_PATTERN
+									.matcher(content);
 							frame.find();
 							content = Main.getURLContent(frame.group(1));
 							link = frame.group(1);
@@ -181,12 +187,12 @@ public class Main {
 									.replaceAll("(http://[^/]*)/.*", "$1");
 						}
 
-						final Matcher m = formPattern.matcher(content);
+						final Matcher m = Main.FORM_PATTERN.matcher(content);
 						if (m.find()) {
 							final String formContent = m.group(1);
-							final Matcher hiddenInputMatcher = hiddenInputPattern
+							final Matcher hiddenInputMatcher = Main.HIDDEN_INPUT_PATTERN
 									.matcher(formContent);
-							final Matcher captchaImageMatcher = captchaImagePattern
+							final Matcher captchaImageMatcher = Main.CAPTCHA_IMAGE_PATTERN
 									.matcher(formContent);
 
 							hiddenInputMatcher.find();
@@ -198,8 +204,8 @@ public class Main {
 
 							if (captchaSource.equals("/help/nocaptcha/nc.gif")) {
 								final MessageBox d = new MessageBox(Main.form);
-								d.setText("Downloadlimit erreicht");
-								d.setMessage("Das Downloadlimit wurde erreicht. Wechseln Sie Ihre IP oder versuchen Sie es später noch einmal.");
+								d.setText("Downloadlimit reached");
+								d.setMessage("Downloadlimit was reached. Change your IP or try again later.");
 								d.open();
 								break outer;
 							}
@@ -213,8 +219,8 @@ public class Main {
 									.getCaptcha(captchaImage);
 
 							if (captcha != null) {
-								// Direkt wieder in content - falls das Captcha
-								// falsch war gibts schon ein neues
+								// save result to content. If captcha is wrong,
+								// the new captcha is already delivered
 								final String content2 = Main
 										.getURLContent(link, "s=" + checksum
 												+ "&c=" + captcha);
@@ -222,10 +228,10 @@ public class Main {
 								content = content2;
 								Matcher downloadLinkMatcher;
 								if (isOld) {
-									downloadLinkMatcher = frameDownloadLinkPattern
+									downloadLinkMatcher = Main.FRAME_DOWNLOADLINK_PATTERN
 											.matcher(content);
 								} else {
-									downloadLinkMatcher = downloadLinkPattern
+									downloadLinkMatcher = Main.DOWNLOADLINK_PATTERN
 											.matcher(content);
 								}
 								while (downloadLinkMatcher.find()) {
@@ -250,10 +256,9 @@ public class Main {
 				} while (linkCount == 0);
 			}
 			((Button) e.widget).setEnabled(true);
-			java.awt.Toolkit.getDefaultToolkit().beep();
+			Main.input.setEnabled(false);
 		}
 
-		@Override
 		public void widgetDefaultSelected(final SelectionEvent e) {
 		}
 	};
